@@ -6,6 +6,7 @@
 
 - 同一个入口显示模型名与推理强度，点击模型名切换模型。
 - DeepSeek 四档：**关闭 / 低 / 高 / 最高**，分别对应 `off / low / high / max`。
+- 拖动或点击时自动选择最近档位，滑块与填充同步缓动；每次操作只在松手时提交。
 - 普通档位显示蓝色滑条；最高档显示紫色流光，粒子仅在滑条内部运动。
 - 整个弹出面板按基础尺寸的 **75%** 显示。
 - 支持键盘调整、恢复模型默认强度和切换失败回退。
@@ -18,11 +19,11 @@
 
 已在 **DeepSeek Harness Desktop 0.2.0-rc.2 / Windows** 的桌面配置中安装；尚未验证其他 Harness 版本或平台。自动测试覆盖模型切换、拖动提交、失败回退、取消拖动、锁定状态与资源清理。桌面界面的最终显示效果请在安装后检查。
 
-从仓库的 Releases 下载 `dsh-codex-controls-0.3.4.tgz`。在下载目录打开 PowerShell，执行：
+从仓库的 Releases 下载 `dsh-codex-controls-0.3.5.tgz`。在下载目录打开 PowerShell，执行：
 
 ```powershell
 $dshCli = Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'
-& $dshCli plugin --profile desktop add '.\dsh-codex-controls-0.3.4.tgz'
+& $dshCli plugin --profile desktop add '.\dsh-codex-controls-0.3.5.tgz'
 ```
 
 如果安装过 `plugin-effort-slider`，先移除，避免多个控件同时出现：

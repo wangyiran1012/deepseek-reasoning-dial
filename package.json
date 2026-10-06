@@ -1,27 +1,54 @@
 {
   "name": "dsh-codex-controls",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "DeepSeek Reasoning Dial: compact model switching and reasoning controls for DeepSeek Harness.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node test/controls.test.mjs"
   },
-  "engines": {"node": ">=20"},
-  "keywords": ["deepseek", "harness", "reasoning", "plugin", "model-picker"],
-  "devDependencies": {"jsdom": "26.1.0"},
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "reasoning",
+    "plugin",
+    "model-picker"
+  ],
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  },
   "type": "module",
   "license": "MIT",
-  "repository": {"type":"git","url":"https://github.com/wangyiran1012/deepseek-reasoning-dial.git"},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wangyiran1012/deepseek-reasoning-dial.git"
+  },
   "homepage": "https://github.com/wangyiran1012/deepseek-reasoning-dial#readme",
-  "bugs": {"url":"https://github.com/wangyiran1012/deepseek-reasoning-dial/issues"},
+  "bugs": {
+    "url": "https://github.com/wangyiran1012/deepseek-reasoning-dial/issues"
+  },
   "main": "./lib/index.js",
-  "exports": {".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},
-  "files": ["lib","src","cordis.patch.yml","README.md","LICENSE"],
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
   "dsh": {
-    "bundle": {"patch":"./cordis.patch.yml"},
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
-      "platform":"web",
-      "inject":[
+      "platform": "web",
+      "inject": [
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-api-remotes",
