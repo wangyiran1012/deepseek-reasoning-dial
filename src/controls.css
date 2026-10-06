@@ -60,3 +60,18 @@
 @media(pointer:coarse){.dcc-trigger,.dcc-tick,.dcc-back,.dcc-panel-model{min-height:44px}.dcc-reset{width:44px;height:44px}.dcc-effort-head{min-height:44px;padding:0 44px}.dcc-slider-wrap{height:44px}.dcc-track,.dcc-fill{top:6px}.dcc-thumb{top:3px}.dcc-range{top:0}.dcc-tick{min-width:40px}}
 @media(max-width:420px){.dcc-popover{width:290px;max-width:calc(100vw - 44px);padding:14px 16px 12px}.dcc-model-label{max-width:165px}.dcc-trigger{padding:6px}.dcc-panel-model{font-size:15px!important}}
 .dcc-popover{transform:scale(.75);transform-origin:left bottom}
+
+.dcc-controls{--dcc-settle:260ms;--dcc-ease:cubic-bezier(.22,1,.36,1)}
+.dcc-controls .dcc-fill{transition:width var(--dcc-settle) var(--dcc-ease),background-color 240ms ease;background:var(--dcc-accent);isolation:isolate}
+.dcc-controls .dcc-thumb{transition:left var(--dcc-settle) var(--dcc-ease),transform 160ms ease,box-shadow 160ms ease}
+.dcc-controls .dcc-dot,.dcc-controls .dcc-value,.dcc-controls .dcc-tick{transition:color 220ms ease,background-color 220ms ease}
+.dcc-controls .dcc-fill::before{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(105deg,light-dark(#643cf0,#7447fa) 0%,light-dark(#9436e9,#a441f0) 46%,light-dark(#b23cd9,#bd51ef) 70%,light-dark(#8030e5,#943be8) 100%);background-size:230% 100%;opacity:0;transition:opacity 240ms ease;pointer-events:none}
+.dcc-controls[data-dcc-max=true] .dcc-fill{background:var(--dcc-accent);animation:none}
+.dcc-controls[data-dcc-max=true] .dcc-fill::before{opacity:1}
+.dcc-controls[data-dcc-max=true][data-dcc-shimmer=true][data-dcc-pane=combined][data-dcc-motion-active=true] .dcc-fill{animation:none}
+.dcc-controls[data-dcc-max=true][data-dcc-shimmer=true][data-dcc-pane=combined][data-dcc-motion-active=true] .dcc-fill::before{animation:dcc-shimmer 3.2s ease-in-out infinite}
+.dcc-controls .dcc-particles{display:block;opacity:0;transition:opacity 280ms ease}
+.dcc-controls[data-dcc-max=true][data-dcc-particles=true][data-dcc-pane=combined][data-dcc-motion-active=true] .dcc-particles{opacity:1}
+.dcc-controls[data-dcc-particles=true][data-dcc-pane=combined][data-dcc-motion-active=true] .dcc-particle{animation:dcc-particle-rise var(--dcc-duration) linear var(--dcc-delay) infinite;animation-play-state:paused}
+.dcc-controls[data-dcc-max=true][data-dcc-particles=true][data-dcc-pane=combined][data-dcc-motion-active=true] .dcc-particle{animation-play-state:running}
+@media(prefers-reduced-motion:reduce){.dcc-controls .dcc-fill,.dcc-controls .dcc-fill::before,.dcc-controls .dcc-thumb,.dcc-controls .dcc-particles,.dcc-controls .dcc-value,.dcc-controls .dcc-dot,.dcc-controls .dcc-tick{transition:none!important;animation:none!important}.dcc-controls[data-dcc-dragging=true] .dcc-thumb{transform:none}.dcc-controls .dcc-particles{display:none!important}}

@@ -4,6 +4,8 @@ export function mountModelControls(root, adapter, options = {}) {
   const doc = root.ownerDocument;
   const ui = {open:options.initialOpen ? 'combined' : null,draft:undefined,busy:false,locked:!!options.locked,error:'',lastModel:undefined};
   let disposed = false;
+  let paneSignature;
+  let visualFraction;
   let knownSnapshot = adapter.getSnapshot();
   const memory = new Map();
   root.classList.add('dcc-controls');
@@ -64,15 +66,23 @@ export function mountModelControls(root, adapter, options = {}) {
   function refreshEffort() {
     const info = selectionInfo();
     const valueLabel = labelFor(info.value, info.levels);
-    const pct = info.index < 0 || info.levels.length < 2 ? 0 : info.index / (info.levels.length - 1) * 100;
+    const fraction = visualFraction ?? (info.index < 0 || info.levels.length < 2 ? 0 : info.index / (info.levels.length - 1));
+    const pct = fraction * 100;
     root.dataset.dccMax = String(info.levels.length > 1 && info.index === info.levels.length - 1);
-    for (const valueNode of popover.querySelectorAll('[data-dcc-value]')) valueNode.textContent = valueLabel;
+    for (const valueNode of popover.querySelectorAll('[data-dcc-value]')) {
+      if(valueNode.textContent === valueLabel) continue;
+      const changing = !!valueNode.textContent;
+      valueNode.textContent = valueLabel;
+      if(changing && !doc.hidden && !doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        valueNode.animate?.([{opacity:.65,transform:'translateY(2px)'},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'ease-out'});
+      }
+    }
     for (const track of popover.querySelectorAll('.dcc-slider-wrap')) {
       track.style.setProperty('--dcc-progress', pct + '%');
-      track.style.setProperty('--dcc-fraction', String(pct / 100));
+      track.style.setProperty('--dcc-fraction', String(fraction));
     }
     for (const range of popover.querySelectorAll('.dcc-range')) {
-      range.value = Math.max(0, info.index);
+      range.value = fraction * Math.max(0, info.levels.length - 1);
       range.setAttribute('aria-valuetext', info.index < 0 ? '默认' : valueLabel);
       range.disabled = ui.busy || ui.locked;
     }
@@ -84,6 +94,8 @@ export function mountModelControls(root, adapter, options = {}) {
   }
   async function save(selection, keepOpen = true) {
     if (ui.busy || ui.locked || disposed) return false;
+    visualFraction = undefined;
+    root.dataset.dccDragging = 'false';
     ui.busy = true;
     ui.error = '';
     render();
@@ -182,9 +194,36 @@ export function mountModelControls(root, adapter, options = {}) {
     range.type = 'range';range.min = '0';range.max = String(info.levels.length - 1);range.step = '1';
     range.setAttribute('aria-label','推理强度');
     range.dataset.dccFocus = 'effort-range';
-    range.addEventListener('input',()=>{ui.draft=info.levels[Number(range.value)].id;refreshEffort();});
-    range.addEventListener('change',()=>{void save({...info.current,reasoningEffort:info.levels[Number(range.value)].id});});
-    range.addEventListener('pointercancel',()=>{ui.draft=undefined;refreshEffort();});
+    range.addEventListener('pointerdown',()=>{root.dataset.dccDragging='true';});
+    range.addEventListener('input',()=>{
+      const raw = Number(range.value);
+      visualFraction = Math.round(raw) / (info.levels.length - 1);
+      ui.draft=info.levels[Math.round(raw)].id;
+      refreshEffort();
+    });
+    range.addEventListener('change',()=>{
+      const level = info.levels[Math.round(Number(range.value))].id;
+      ui.draft = level;
+      void save({...info.current,reasoningEffort:level});
+    });
+    range.addEventListener('pointerup',()=>{root.dataset.dccDragging='false';});
+    range.addEventListener('pointercancel',()=>{
+      visualFraction=undefined;ui.draft=undefined;root.dataset.dccDragging='false';refreshEffort();
+    });
+    range.addEventListener('keydown',event=>{
+      const infoNow=selectionInfo();
+      let index=Math.max(0,infoNow.index);
+      if(['ArrowRight','ArrowUp','PageUp'].includes(event.key))index++;
+      else if(['ArrowLeft','ArrowDown','PageDown'].includes(event.key))index--;
+      else if(event.key==='Home')index=0;
+      else if(event.key==='End')index=info.levels.length-1;
+      else return;
+      event.preventDefault();
+      if(ui.busy||ui.locked)return;
+      const level=info.levels[Math.max(0,Math.min(info.levels.length-1,index))].id;
+      ui.draft=level;
+      void save({...info.current,reasoningEffort:level});
+    });
     const particles = element('div','dcc-particles');
     particles.setAttribute('aria-hidden','true');
     for(let i=0;i<26;i++) {
@@ -211,7 +250,7 @@ export function mountModelControls(root, adapter, options = {}) {
     const focused = root.contains(doc.activeElement) ? doc.activeElement?.dataset?.dccFocus : undefined;
     let info = selectionInfo();
     const key = info.current ? info.current.provider + '/' + info.current.model : undefined;
-    if (key !== ui.lastModel) {ui.draft=undefined;ui.lastModel=key;info=selectionInfo();}
+    if (key !== ui.lastModel) {visualFraction=undefined;ui.draft=undefined;ui.lastModel=key;info=selectionInfo();}
     modelLabel.textContent = info.model?.name || info.current?.model || '选择模型';
     modelButton.setAttribute('aria-label','模型与推理强度：' + modelLabel.textContent+'，'+labelFor(info.chosen,info.levels));
     modelButton.dataset.tooltip=modelButton.getAttribute('aria-label');
@@ -220,17 +259,28 @@ export function mountModelControls(root, adapter, options = {}) {
     modelButton.setAttribute('aria-expanded',String(ui.open==='combined'||ui.open==='model'));
     root.dataset.dccPane=ui.open || 'closed';
     popover.hidden = ui.open === null;
-    popover.replaceChildren();
-    if (ui.open==='model') popover.append(modelsSection(info));
-    if (ui.open==='combined') popover.append(effortSection(info));
-    const error = element('div','dcc-error',ui.error);
-    error.setAttribute('role','alert');error.hidden=!ui.error;popover.append(error);
+    const signature=JSON.stringify([ui.open,key,info.levels.map(e=>e.id),info.groups]);
+    // Keep the slider and its effect layers alive across selection commits.
+    if(signature!==paneSignature) {
+      visualFraction=undefined;
+      paneSignature=signature;
+      popover.replaceChildren();
+      if(ui.open==='model')popover.append(modelsSection(info));
+      if(ui.open==='combined')popover.append(effortSection(info));
+      const error=element('div','dcc-error');error.setAttribute('role','alert');popover.append(error);
+    }
+    for(const control of popover.querySelectorAll('button'))control.disabled=ui.busy||ui.locked;
+    const reset=popover.querySelector('.dcc-reset');
+    if(reset)reset.disabled=ui.busy||ui.locked||!info.levels.some(e=>e.id===info.model?.reasoning?.defaultEffort);
+    const error=popover.querySelector('.dcc-error');
+    error.textContent=ui.error;error.hidden=!ui.error;
     refreshEffort();
     doc.defaultView?.lucide?.createIcons({attrs:{width:16,height:16}});
     if (focused) Array.from(root.querySelectorAll('[data-dcc-focus]')).find(n=>n.dataset.dccFocus===focused)?.focus({preventScroll:true});
   }
   function open() {
     if(ui.locked)return;
+    visualFraction=undefined;root.dataset.dccDragging='false';
     ui.open = ui.open ? null : 'combined';
     ui.draft=undefined;ui.error='';render();
     if (ui.open) void adapter.load?.();
