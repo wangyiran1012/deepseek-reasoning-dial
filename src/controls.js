@@ -1,11 +1,45 @@
 const EFFORT_LABELS = {off:'关闭',minimal:'最小',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高'};
 
+export function mountIsolatedModelControls(host, adapter, options = {}) {
+  const shadow = host.shadowRoot || host.attachShadow({mode:'open'});
+  const style = host.ownerDocument.createElement('style');
+  style.textContent = options.styles || '';
+  const root = host.ownerDocument.createElement('div');
+  root.setAttribute('aria-label', host.getAttribute('aria-label') || '模型与推理强度');
+  shadow.replaceChildren(style, root);
+  function syncTypography() {
+    const view=host.ownerDocument.defaultView;
+    if(!view)return;
+    let sample=host.parentElement;
+    // Match a nearby composer text control, without inheriting its layout rules.
+    for(let parent=host.parentElement,depth=0;parent&&depth<5;parent=parent.parentElement,depth++) {
+      const peer=[...parent.querySelectorAll('button')].find(button=>!host.contains(button)&&button.textContent.trim()&&button.getClientRects().length);
+      if(!peer)continue;
+      sample=[...peer.querySelectorAll('span')].find(span=>!span.children.length&&span.textContent.trim())||peer;
+      break;
+    }
+    const computed=sample&&view.getComputedStyle(sample);
+    const size=parseFloat(computed?.fontSize);
+    root.style.setProperty('--dcc-ui-font-size',Number.isFinite(size)&&size>=10&&size<=24?size+'px':'13px');
+    if(computed?.fontFamily)root.style.setProperty('--dcc-ui-font-family',computed.fontFamily);
+  }
+  syncTypography();
+  const observer=host.ownerDocument.defaultView?.ResizeObserver;
+  const typographyObserver=observer&&host.parentElement?new observer(syncTypography):null;
+  typographyObserver?.observe(host.parentElement);
+  host.ownerDocument.defaultView?.addEventListener('resize',syncTypography);
+  const view = mountModelControls(root, adapter, options);
+  return {...view,syncTypography,dispose(){typographyObserver?.disconnect();host.ownerDocument.defaultView?.removeEventListener('resize',syncTypography);view.dispose();shadow.replaceChildren();}};
+}
+
 export function mountModelControls(root, adapter, options = {}) {
   const doc = root.ownerDocument;
   const ui = {open:options.initialOpen ? 'combined' : null,draft:undefined,busy:false,locked:!!options.locked,error:'',lastModel:undefined};
   let disposed = false;
   let paneSignature;
   let visualFraction;
+  let popoverAnchor;
+  let sizingSignature;
   let knownSnapshot = adapter.getSnapshot();
   const memory = new Map();
   root.classList.add('dcc-controls');
@@ -25,22 +59,29 @@ export function mountModelControls(root, adapter, options = {}) {
     node.type = 'button';
     return node;
   }
-  function icon(name, fallback) {
+  function icon(name) {
     const node = element('i', 'dcc-icon');
-    node.setAttribute('data-lucide', name);
+    node.dataset.dccIcon = name;
     node.setAttribute('aria-hidden', 'true');
-    if (!doc.defaultView?.lucide) node.textContent = fallback;
     return node;
+  }
+  function activeElement() {
+    return root.getRootNode().activeElement || doc.activeElement;
   }
   const toolbar = element('div', 'dcc-toolbar');
   const modelButton = button('dcc-trigger dcc-model-trigger', '');
+  const modelSlot = element('span', 'dcc-model-slot');
   const modelLabel = element('span', 'dcc-model-label');
+  const modelSizer = element('span', 'dcc-model-sizer');
+  modelSizer.setAttribute('aria-hidden', 'true');
   const effortLabel = element('span', 'dcc-current-effort');
-  modelButton.append(modelLabel, effortLabel, icon('chevron-down','⌄'));
+  modelSlot.append(modelLabel, modelSizer);
+  modelButton.append(modelSlot, effortLabel, icon('chevron-down','⌄'));
   modelButton.setAttribute('aria-haspopup', 'dialog');
   modelButton.dataset.dccFocus = 'model-trigger';
   toolbar.append(modelButton);
   const popover = element('div', 'dcc-popover');
+  popover.hidden = true;
   popover.setAttribute('role', 'dialog');
   popover.setAttribute('aria-label', '模型与推理强度设置');
   const live = element('span', 'dcc-live');
@@ -63,6 +104,30 @@ export function mountModelControls(root, adapter, options = {}) {
   function labelFor(value, levels) {
     return EFFORT_LABELS[value] || levels.find(e => e.id === value)?.name || value || '默认';
   }
+  function placePopover() {
+    if (!ui.open || disposed) return;
+    // Measure the toolbar without an unpositioned popup creating scrollbars.
+    popover.hidden = true;
+    const rootRect = root.getBoundingClientRect();
+    const measuredScale = rootRect.width / root.offsetWidth || 1;
+    const scale = Math.abs(measuredScale - 1) < .01 ? 1 : measuredScale;
+    const viewportWidth = doc.documentElement.clientWidth || doc.defaultView?.innerWidth;
+    const viewportHeight = doc.documentElement.clientHeight || doc.defaultView?.innerHeight;
+    popover.hidden = false;
+    if (!rootRect.width || !viewportWidth || !viewportHeight) return;
+    // Retain one viewport anchor throughout an open session, including model changes.
+    popoverAnchor ||= {left:rootRect.left,bottom:rootRect.top - 8 * scale};
+    const bottom = Math.min(viewportHeight - 12, Math.max(12, popoverAnchor.bottom));
+    popover.style.setProperty('--dcc-available-height', Math.max(0, (bottom - 12) / scale) + 'px');
+    const width = popover.getBoundingClientRect().width;
+    const left = Math.max(12, Math.min(popoverAnchor.left, viewportWidth - 12 - width));
+    popover.style.left = (left - rootRect.left) / scale + 'px';
+    popover.style.bottom = (rootRect.bottom - bottom) / scale + 'px';
+  }
+  function reanchorPopover() {
+    popoverAnchor = undefined;
+    placePopover();
+  }
   function refreshEffort() {
     const info = selectionInfo();
     const valueLabel = labelFor(info.value, info.levels);
@@ -74,10 +139,11 @@ export function mountModelControls(root, adapter, options = {}) {
       const changing = !!valueNode.textContent;
       valueNode.textContent = valueLabel;
       if(changing && !doc.hidden && !doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-        valueNode.animate?.([{opacity:.65,transform:'translateY(2px)'},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'ease-out'});
+        valueNode.animate?.([{opacity:.65},{opacity:1}],{duration:160,easing:'ease-out'});
       }
     }
     for (const track of popover.querySelectorAll('.dcc-slider-wrap')) {
+      if(track.style.getPropertyValue('--dcc-fraction') !== String(fraction))track.dataset.dccThumbHover='false';
       track.style.setProperty('--dcc-progress', pct + '%');
       track.style.setProperty('--dcc-fraction', String(fraction));
     }
@@ -119,26 +185,34 @@ export function mountModelControls(root, adapter, options = {}) {
   }
   function modelsSection(info) {
     const section = element('section', 'dcc-model-section');
-    const back = button('dcc-back','');
-    back.append(icon('chevron-left','‹'),element('span','','选择模型'));
-    back.dataset.dccFocus = 'model-back';
-    back.addEventListener('click',()=>{ui.open='combined';render();popover.querySelector('.dcc-panel-model')?.focus();});
-    section.append(back);
-    if (!info.groups.length) section.append(element('div','dcc-empty',info.snapshot.status === 'loading' ? '正在加载模型…' : '暂无可用模型'));
-    for (const group of info.groups) {
-      if (info.groups.length > 1) section.append(element('div','dcc-group-label',group.name || group.id));
+    section.append(element('h2','dcc-model-heading','选择模型'));
+    const list = element('div', 'dcc-model-list');
+    list.setAttribute('role','radiogroup');
+    list.setAttribute('aria-label','可用模型');
+    const groups = info.groups.filter(group=>group.models?.length);
+    if (!groups.length) list.append(element('div','dcc-empty',info.snapshot.status === 'loading' ? '正在加载模型…' : '暂无可用模型'));
+    let firstRow;
+    let selectedRow;
+    for (const group of groups) {
+      if (groups.length > 1) list.append(element('div','dcc-group-label',group.name || group.id));
       for (const model of group.models || []) {
         const row = button('dcc-model-row','');
         row.setAttribute('role','radio');
         const selected = info.current?.provider === group.id && info.current?.model === model.id;
         row.setAttribute('aria-checked',String(selected));
+        row.tabIndex = -1;
+        firstRow ||= row;
+        if(selected)selectedRow=row;
         row.disabled = ui.busy || ui.locked;
         row.dataset.dccFocus = 'model-' + group.id + '-' + model.id;
-        const copy = element('span','dcc-model-copy');
-        copy.append(element('span','dcc-model-name',model.name || model.id));
-        if (model.description) copy.append(element('span','dcc-model-desc',model.description));
-        row.append(copy,element('span','dcc-check',selected?'✓':''));
+        const name = model.name || model.id;
+        row.title = [name,model.description].filter(Boolean).join('\n');
+        row.setAttribute('aria-label',name);
+        const check = element('span','dcc-check',selected?'✓':'');
+        check.setAttribute('aria-hidden','true');
+        row.append(element('span','dcc-model-name',name),check);
         row.addEventListener('click', () => {
+          if(selected){ui.open='combined';render();popover.querySelector('.dcc-panel-model')?.focus();return;}
           const available = model.reasoning?.efforts || [];
           const prior = memory.get(group.id + '/' + model.id) ?? info.chosen;
           const effort = available.some(e=>e.id===prior) ? prior : model.reasoning?.defaultEffort;
@@ -146,11 +220,23 @@ export function mountModelControls(root, adapter, options = {}) {
           if (effort !== undefined) selection.reasoningEffort = effort;
           void save(selection).then(ok=>{if(ok&&!disposed){ui.open='combined';render();popover.querySelector('.dcc-panel-model')?.focus();}});
         });
-        section.append(row);
+        row.addEventListener('keydown',event=>{
+          if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+          event.preventDefault();
+          const rows=[...list.querySelectorAll('[role=radio]:not(:disabled)')];
+          if(!rows.length)return;
+          const current=rows.indexOf(row);
+          const index=event.key==='Home'?0:event.key==='End'?rows.length-1:(current+(event.key==='ArrowDown'?1:-1)+rows.length)%rows.length;
+          for(const item of rows)item.tabIndex=-1;
+          rows[index].tabIndex=0;
+          rows[index].focus({preventScroll:true});
+          rows[index].scrollIntoView?.({block:'nearest'});
+        });
+        list.append(row);
       }
     }
-    section.setAttribute('role','radiogroup');
-    section.setAttribute('aria-label','可用模型');
+    if(selectedRow||firstRow)(selectedRow||firstRow).tabIndex=0;
+    section.append(list);
     return section;
   }
   function effortSection(info) {
@@ -158,20 +244,18 @@ export function mountModelControls(root, adapter, options = {}) {
     const head = element('div','dcc-effort-head');
     const badge = element('span','dcc-value');
     badge.dataset.dccValue = '';
-    const reset = button('dcc-reset','');
-    reset.append(icon('rotate-ccw','↶'));
-    reset.setAttribute('aria-label','恢复默认推理强度');
-    reset.dataset.dccFocus = 'effort-reset';
-    const defaultEffort = info.model?.reasoning?.defaultEffort;
-    reset.disabled = ui.busy || ui.locked || !info.current || !info.levels.some(e=>e.id===defaultEffort);
-    reset.addEventListener('click',()=>{ui.draft=undefined;void save({...info.current,reasoningEffort:defaultEffort});});
-    head.append(badge,reset);
+    head.append(badge);
     const modelLink = button('dcc-panel-model','');
     modelLink.append(element('span','',info.model?.name || info.current?.model || '选择模型'),icon('chevron-right','›'));
     modelLink.dataset.dccFocus = 'panel-model';
     modelLink.setAttribute('aria-label','切换模型');
     modelLink.disabled=ui.busy || ui.locked;
-    modelLink.addEventListener('click',()=>{ui.open='model';ui.draft=undefined;render();popover.querySelector('.dcc-back')?.focus();});
+    modelLink.addEventListener('click',()=>{
+      ui.open='model';ui.draft=undefined;render();
+      const row=popover.querySelector('[role=radio][tabindex="0"]');
+      (row||modelButton).focus({preventScroll:true});
+      row?.scrollIntoView?.({block:'nearest'});
+    });
     section.append(head,modelLink);
     if (info.levels.length < 2) {
       section.append(element('div','dcc-empty',info.levels.length ? '当前模型只提供一个推理档位。' : '当前模型未提供可调节的推理档位。'));
@@ -191,9 +275,19 @@ export function mountModelControls(root, adapter, options = {}) {
       ticks.append(tick);
     }
     const range = element('input','dcc-range');
+    const thumb = element('span','dcc-thumb');
     range.type = 'range';range.min = '0';range.max = String(info.levels.length - 1);range.step = '1';
     range.setAttribute('aria-label','推理强度');
     range.dataset.dccFocus = 'effort-range';
+    function updateThumbHover(event) {
+      if(event.pointerType === 'touch' || range.disabled){wrap.dataset.dccThumbHover='false';return;}
+      const rect = thumb.getBoundingClientRect();
+      const radius = Math.min(rect.width, rect.height) / 2;
+      const distance = Math.hypot(event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
+      wrap.dataset.dccThumbHover=String(radius > 0 && distance <= radius);
+    }
+    range.addEventListener('pointermove',updateThumbHover);
+    range.addEventListener('pointerleave',()=>{wrap.dataset.dccThumbHover='false';});
     range.addEventListener('pointerdown',()=>{root.dataset.dccDragging='true';});
     range.addEventListener('input',()=>{
       const raw = Number(range.value);
@@ -226,12 +320,11 @@ export function mountModelControls(root, adapter, options = {}) {
     });
     const particles = element('div','dcc-particles');
     particles.setAttribute('aria-hidden','true');
-    for(let i=0;i<26;i++) {
+    for(let i=0;i<64;i++) {
       const particle=element('span','dcc-particle');
       particle.style.setProperty('--dcc-px',((i*37)%97+1)+'%');
       particle.style.setProperty('--dcc-py',((i*19)%66+17)+'%');
-      particle.style.setProperty('--dcc-drift',(14+(i*11)%38)+'px');
-      particle.style.setProperty('--dcc-rise',((i*7)%13-6)+'px');
+      particle.style.setProperty('--dcc-drift',(-70-(i*11)%76)+'px');
       particle.style.setProperty('--dcc-duration',(2+(i%7)*.24)+'s');
       particle.style.setProperty('--dcc-delay',(-i*.21)+'s');
       particle.style.setProperty('--dcc-size',(i%5===0?3:2)+'px');
@@ -239,7 +332,7 @@ export function mountModelControls(root, adapter, options = {}) {
     }
     const fill = element('div','dcc-fill');
     fill.append(particles);
-    wrap.append(element('div','dcc-track'),fill,dots,element('span','dcc-thumb'),range);
+    wrap.append(element('div','dcc-track'),fill,dots,thumb,range);
     body.append(wrap);
     if(options.showTicks)body.append(ticks);
     section.append(body);
@@ -247,11 +340,18 @@ export function mountModelControls(root, adapter, options = {}) {
   }
   function render() {
     if (disposed) return;
-    const focused = root.contains(doc.activeElement) ? doc.activeElement?.dataset?.dccFocus : undefined;
+    const focused = root.contains(activeElement()) ? activeElement()?.dataset?.dccFocus : undefined;
     let info = selectionInfo();
     const key = info.current ? info.current.provider + '/' + info.current.model : undefined;
     if (key !== ui.lastModel) {visualFraction=undefined;ui.draft=undefined;ui.lastModel=key;info=selectionInfo();}
     modelLabel.textContent = info.model?.name || info.current?.model || '选择模型';
+    const names = [...new Set([...info.groups.flatMap(group=>(group.models||[]).map(model=>model.name||model.id)),modelLabel.textContent])];
+    const nextSizingSignature=JSON.stringify(names);
+    const sizingChanged=nextSizingSignature!==sizingSignature;
+    if(sizingChanged){
+      sizingSignature=nextSizingSignature;
+      modelSizer.replaceChildren(...names.map(name=>element('span','',name)));
+    }
     modelButton.setAttribute('aria-label','模型与推理强度：' + modelLabel.textContent+'，'+labelFor(info.chosen,info.levels));
     modelButton.dataset.tooltip=modelButton.getAttribute('aria-label');
     effortLabel.textContent = labelFor(info.chosen,info.levels);
@@ -259,9 +359,11 @@ export function mountModelControls(root, adapter, options = {}) {
     modelButton.setAttribute('aria-expanded',String(ui.open==='combined'||ui.open==='model'));
     root.dataset.dccPane=ui.open || 'closed';
     popover.hidden = ui.open === null;
+    if(!ui.open)popoverAnchor=undefined;
     const signature=JSON.stringify([ui.open,key,info.levels.map(e=>e.id),info.groups]);
     // Keep the slider and its effect layers alive across selection commits.
-    if(signature!==paneSignature) {
+    const paneChanged = signature !== paneSignature;
+    if(paneChanged) {
       visualFraction=undefined;
       paneSignature=signature;
       popover.replaceChildren();
@@ -270,12 +372,11 @@ export function mountModelControls(root, adapter, options = {}) {
       const error=element('div','dcc-error');error.setAttribute('role','alert');popover.append(error);
     }
     for(const control of popover.querySelectorAll('button'))control.disabled=ui.busy||ui.locked;
-    const reset=popover.querySelector('.dcc-reset');
-    if(reset)reset.disabled=ui.busy||ui.locked||!info.levels.some(e=>e.id===info.model?.reasoning?.defaultEffort);
     const error=popover.querySelector('.dcc-error');
     error.textContent=ui.error;error.hidden=!ui.error;
     refreshEffort();
-    doc.defaultView?.lucide?.createIcons({attrs:{width:16,height:16}});
+    // Effort commits keep the live slider and particle animation uninterrupted.
+    if(paneChanged||sizingChanged)placePopover();
     if (focused) Array.from(root.querySelectorAll('[data-dcc-focus]')).find(n=>n.dataset.dccFocus===focused)?.focus({preventScroll:true});
   }
   function open() {
@@ -289,15 +390,18 @@ export function mountModelControls(root, adapter, options = {}) {
   function outside(event) {
     if(root.closest('[data-variant]')?.hidden)return;
     if(options.outsideBoundary&&!options.outsideBoundary.contains(event.target))return;
-    if(ui.open&&!root.contains(event.target)){ui.open=null;ui.draft=undefined;render();}
+    const inside = root.contains(event.target) || event.composedPath?.().includes(root);
+    if(ui.open&&!inside){ui.open=null;ui.draft=undefined;render();}
   }
-  function escape(event) {if(event.key==='Escape'&&ui.open&&root.contains(doc.activeElement)){ui.open=null;ui.draft=undefined;render();modelButton.focus();}}
+  function escape(event) {if(event.key==='Escape'&&ui.open&&root.contains(activeElement())){ui.open=null;ui.draft=undefined;render();modelButton.focus();}}
   doc.addEventListener('pointerdown',outside);
   function visibility(){root.dataset.dccMotionActive=String(!doc.hidden);}
   doc.addEventListener('visibilitychange',visibility);
+  doc.defaultView?.addEventListener('resize',reanchorPopover);
+  doc.addEventListener('scroll',reanchorPopover,true);
   root.addEventListener('keydown',escape);
   const stop = adapter.subscribe(()=>{knownSnapshot=adapter.getSnapshot();render();});
   render();
   void adapter.load?.();
-  return {render,setLocked(value){ui.locked=!!value;if(ui.locked){ui.open=null;ui.draft=undefined;}render();},setShimmer(value){root.dataset.dccShimmer=String(value);},setParticles(value){root.dataset.dccParticles=String(value);},dispose(){disposed=true;stop?.();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('visibilitychange',visibility);root.removeEventListener('keydown',escape);root.replaceChildren();}};
+  return {render,setLocked(value){ui.locked=!!value;if(ui.locked){ui.open=null;ui.draft=undefined;}render();},setShimmer(value){root.dataset.dccShimmer=String(value);},setParticles(value){root.dataset.dccParticles=String(value);},dispose(){disposed=true;stop?.();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('visibilitychange',visibility);doc.defaultView?.removeEventListener('resize',reanchorPopover);doc.removeEventListener('scroll',reanchorPopover,true);root.removeEventListener('keydown',escape);root.replaceChildren();}};
 }
