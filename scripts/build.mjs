@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const root = new URL('../', import.meta.url);
 const read = path => readFileSync(new URL(path, root), 'utf8');
 const pkg = JSON.parse(read('package.json'));
-const renderer = read('src/controls.js').replace('export function mountModelControls', 'function mountModelControls');
+const renderer = read('src/controls.js').replaceAll('export function ', 'function ');
 const css = read('src/controls.css');
 const bridge = read('src/client-adapter.js');
 const bundle = `window.__ModuleLoader__.load({id:${JSON.stringify(pkg.name)},factory:(require)=>{const React=require('react');const exports={};const CONTROLS_CSS=${JSON.stringify(css)};\n${renderer}\n${bridge}\nreturn exports;}});\n`;
