@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-controls",
-  "version": "0.3.5",
+  "version": "0.3.11",
   "description": "DeepSeek Reasoning Dial: compact model switching and reasoning controls for DeepSeek Harness.",
   "scripts": {
     "build": "node scripts/build.mjs",

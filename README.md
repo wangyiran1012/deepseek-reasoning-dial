@@ -7,9 +7,13 @@
 - 同一个入口显示模型名与推理强度，点击模型名切换模型。
 - DeepSeek 四档：**关闭 / 低 / 高 / 最高**，分别对应 `off / low / high / max`。
 - 拖动或点击时自动选择最近档位，滑块与填充同步缓动；每次操作只在松手时提交。
-- 普通档位显示蓝色滑条；最高档显示紫色流光，粒子仅在滑条内部运动。
-- 整个弹出面板按基础尺寸的 **75%** 显示。
-- 支持键盘调整、恢复模型默认强度和切换失败回退。
+- 普通档位显示蓝色滑条；最高档显示紫色流光，64 个粒子仅在滑条内部从右向左回流。
+- 鼠标进入白色圆形滑块时平滑放大，离开后恢复；调节时不显示整条彩色焦点外圈。
+- 紧凑面板宽 248px，滑块直径 24px；小窗口自动收窄。展开与收起时的文字均跟随聊天框相邻控件的字号。
+- 模型名与强度均预留稳定宽度，切换后保持入口与面板位置；靠近窗口边缘时自动避让。
+- 模型列表采用紧凑单行布局，保留服务商分组与勾选，悬停查看完整说明；长列表在面板内滚动，支持方向键定位、回车选择。
+- 支持键盘调整和切换失败回退；面板不含重置按钮。
+- 软件与预览使用同一个渲染器和 Shadow DOM 样式，隔离宿主全局样式；仅同步聊天框控件的字体和字号。
 - 跟随宿主深浅色主题，尊重系统减少动态效果设置。
 - 宿主锁定模型选择时禁用控件，在不可切换模型的子代理会话中隐藏。
 
@@ -19,11 +23,11 @@
 
 已在 **DeepSeek Harness Desktop 0.2.0-rc.2 / Windows** 的桌面配置中安装；尚未验证其他 Harness 版本或平台。自动测试覆盖模型切换、拖动提交、失败回退、取消拖动、锁定状态与资源清理。桌面界面的最终显示效果请在安装后检查。
 
-从仓库的 Releases 下载 `dsh-codex-controls-0.3.5.tgz`。在下载目录打开 PowerShell，执行：
+从仓库的 Releases 下载对应版本安装包（本地构建为 `dsh-codex-controls-0.3.11.tgz`）。在下载目录打开 PowerShell，执行：
 
 ```powershell
 $dshCli = Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'
-& $dshCli plugin --profile desktop add '.\dsh-codex-controls-0.3.5.tgz'
+& $dshCli plugin --profile desktop add '.\dsh-codex-controls-0.3.11.tgz'
 ```
 
 如果安装过 `plugin-effort-slider`，先移除，避免多个控件同时出现：
